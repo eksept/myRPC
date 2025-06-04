@@ -9,9 +9,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <json-c/json.h>
+#include <sys/wait.h>
 
-#define CONF_FILE "/etc/myRPC/myRPC.conf"
-#define USERS_FILE "/etc/myRPC/users.conf"
+#define CONF_FILE "/home/da/Desktops/Desktop1/myRPC/config/myRPC.conf"
+#define USERS_FILE "/home/da/Desktops/Desktop1/myRPC/config/users.conf"
 #define BUF_SIZE 4096
 
 static int log_driver = 0;
@@ -40,15 +41,22 @@ void load_server_config(int* port, int* use_tcp) {
 
 int is_user_authorized(const char* login) {
     FILE* f = fopen(USERS_FILE, "r");
-    if (!f) return 0;
-    char buf[64];
+    if (!f) {
+        perror("Failed to open users.conf");
+        printf("Tried to open file: %s\n", USERS_FILE);
+        return 0;
+    }
+
+    char buf[128];
     while (fgets(buf, sizeof(buf), f)) {
-        buf[strcspn(buf, "\n")] = 0;
+        // Удаляем символ новой строки
+        buf[strcspn(buf, "\r\n")] = 0;
         if (strcmp(buf, login) == 0) {
             fclose(f);
             return 1;
         }
     }
+
     fclose(f);
     return 0;
 }
@@ -90,20 +98,36 @@ char* execute_command(const char* cmd, int* success) {
     char tmp_err[] = "/tmp/rpc_err_XXXXXX";
     int fd_out = mkstemp(tmp_out);
     int fd_err = mkstemp(tmp_err);
-    close(fd_out); close(fd_err);
+    if (fd_out < 0 || fd_err < 0) {
+        if (fd_out >= 0) close(fd_out);
+        if (fd_err >= 0) close(fd_err);
+        *success = 0;
+        return strdup("Failed to create temporary files");
+    }
+    close(fd_out);
+    close(fd_err);
 
     char* quoted = quote_shell_arg(cmd);
-    if (!quoted) return strdup("Internal error");
+    if (!quoted) {
+        *success = 0;
+        return strdup("Internal error");
+    }
 
     char shell_cmd[1024];
     snprintf(shell_cmd, sizeof(shell_cmd), "sh -c %s > %s 2> %s", quoted, tmp_out, tmp_err);
     free(quoted);
 
-    int rc = system(shell_cmd);
-    *success = (rc == 0);
+    int status = system(shell_cmd);
+    int ok = 0;
+    if (status != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        ok = 1;
+    }
+    *success = ok;
 
-    char* result = read_temp_file(*success ? tmp_out : tmp_err);
-    unlink(tmp_out); unlink(tmp_err);
+    char* result = read_temp_file(ok ? tmp_out : tmp_err);
+    unlink(tmp_out);
+    unlink(tmp_err);
+
     return result;
 }
 
