@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
         }
 
     } else {
-        struct timeval timeout = {.tv_sec = 5, .tv_usec = 0};
+        struct timeval timeout = {.tv_sec = 15, .tv_usec = 0};
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
         sendto(sock, json_data, strlen(json_data), 0, (struct sockaddr *)&addr, sizeof(addr));

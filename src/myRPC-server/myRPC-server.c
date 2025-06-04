@@ -49,7 +49,6 @@ int is_user_authorized(const char* login) {
 
     char buf[128];
     while (fgets(buf, sizeof(buf), f)) {
-        // Удаляем символ новой строки
         buf[strcspn(buf, "\r\n")] = 0;
         if (strcmp(buf, login) == 0) {
             fclose(f);
@@ -147,10 +146,9 @@ int parse_request(const char* input, RpcRequest* req) {
     json_object_put(root);
     return 0;
 }
-
 void build_response(int success, const char* result, char* out_json, size_t out_size) {
     struct json_object* reply = json_object_new_object();
-    json_object_object_add(reply, "code", json_object_new_int(success ? 0 : 1));
+    json_object_object_add(reply, "code", json_object_new_int(success ? 1 : 0));
     json_object_object_add(reply, "result", json_object_new_string(result));
     snprintf(out_json, out_size, "%s", json_object_to_json_string(reply));
     json_object_put(reply);
@@ -164,6 +162,9 @@ int main() {
     log_info("myRPC-сервер запущен на порту %d, протокол: %s", port, use_tcp ? "TCP" : "UDP");
 
     printf("myRPC-server запущен, слушает порт %d\n", port);
+    fflush(stdout);
+
+    printf("Логирование в файл: %s\n", log_file);
     fflush(stdout);
 
     int sock = socket(AF_INET, use_tcp ? SOCK_STREAM : SOCK_DGRAM, 0);
@@ -196,9 +197,18 @@ int main() {
         int conn_fd = use_tcp ? accept(sock, (struct sockaddr*)&client_addr, &addrlen) : sock;
         if (conn_fd < 0 && use_tcp) continue;
 
-        ssize_t received = use_tcp ?
-            recv(conn_fd, buffer, sizeof(buffer) - 1, 0) :
-            recvfrom(sock, buffer, sizeof(buffer) - 1, 0, (struct sockaddr*)&client_addr, &addrlen);
+        ssize_t received = 0;
+        if (use_tcp) {
+            received = recv(conn_fd, buffer, sizeof(buffer) - 1, 0);
+        } else {
+            addrlen = sizeof(client_addr);
+            received = recvfrom(sock, buffer, sizeof(buffer) - 1, 0, (struct sockaddr*)&client_addr, &addrlen);
+            if (received > 0) {
+                char client_ip[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
+                log_info("Получено UDP-сообщение от %s:%d", client_ip, ntohs(client_addr.sin_port));
+            }
+        }
 
         if (received <= 0) {
             if (use_tcp) close(conn_fd);
@@ -226,6 +236,10 @@ int main() {
             send(conn_fd, json_reply, strlen(json_reply), 0);
             close(conn_fd);
         } else {
+            char client_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
+            log_info("Отправка UDP-ответа клиенту %s:%d", client_ip, ntohs(client_addr.sin_port));
+
             sendto(sock, json_reply, strlen(json_reply), 0, (struct sockaddr*)&client_addr, addrlen);
         }
     }
